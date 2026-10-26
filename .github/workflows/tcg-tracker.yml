@@ -1,0 +1,43 @@
+name: TCG Tracker
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "5,35 6-20 * * *"
+      timezone: "Europe/Zagreb"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tcg-tracker-scrape
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      TCG_TELEGRAM_BOT_TOKEN: ${{ secrets.TCG_TELEGRAM_BOT_TOKEN }}
+      TCG_TELEGRAM_CHAT_ID: ${{ secrets.TCG_TELEGRAM_CHAT_ID }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Provjeri tajne
+        run: |
+          test -n "$DATABASE_URL" || { echo "Nedostaje DATABASE_URL"; exit 1; }
+          test -n "$TCG_TELEGRAM_BOT_TOKEN" || { echo "Nedostaje Telegram bot token"; exit 1; }
+          test -n "$TCG_TELEGRAM_CHAT_ID" || { echo "Nedostaje Telegram chat ID"; exit 1; }
+
+      - name: Instaliraj pakete
+        run: python -m pip install -r requirements.txt
+
+      - name: Pokreni scraper
+        run: python run.py
