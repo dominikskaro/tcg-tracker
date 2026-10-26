@@ -1,4 +1,4 @@
-import sqlite3
+import os
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
@@ -12,9 +12,26 @@ import streamlit as st
 
 from matching import match_key
 
+st.set_page_config(page_title="TCG Tracker", layout="wide")
+
 DB_PATH = Path(__file__).with_name("tcg.db")
 
-st.set_page_config(page_title="TCG Tracker", layout="wide")
+
+def _configured_database_url():
+    if os.getenv("DATABASE_URL"):
+        return os.getenv("DATABASE_URL")
+    try:
+        return st.secrets["DATABASE_URL"]
+    except Exception:
+        return None
+
+
+DATABASE_URL = _configured_database_url()
+
+
+def connect_db():
+    return db.connect(DB_PATH, database_url=DATABASE_URL)
+
 st.title("TCG Tracker — cijene i zalihe")
 st.caption(
     "Prikazuje proizvode na zalihi, naručive SophosLab prednarudžbe i Shopify "
@@ -34,27 +51,22 @@ def format_time(value):
     )
 
 
-with db.connect(DB_PATH) as conn:
+with connect_db() as conn:
     conn.execute("""
         CREATE TABLE IF NOT EXISTS product_favorites (
             match_key TEXT PRIMARY KEY,
             added_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    listing_columns = {
-        row[1] for row in conn.execute("PRAGMA table_info(listings)")
-    }
-    match_name_column = "match_name" if "match_name" in listing_columns else "NULL"
-    game_column = "game" if "game" in listing_columns else "NULL"
     listings = conn.execute("""
-        SELECT shop, name, {match_name_column} AS match_name, price, url, is_preorder, first_seen, last_seen,
+        SELECT shop, name, match_name, price, url, is_preorder, first_seen, last_seen,
                (SELECT CASE WHEN COUNT(*) > 1 THEN MAX(ts) END
                 FROM price_history
                 WHERE listing_id = listings.id) AS last_change,
-               in_stock, {game_column} AS game, orderable
+               in_stock, game, orderable
         FROM listings
         WHERE price >= 30
-    """.format(match_name_column=match_name_column, game_column=game_column)).fetchall()
+    """).fetchall()
 
     shop_updates = conn.execute("""
         SELECT shop, MAX(last_seen)
@@ -63,12 +75,9 @@ with db.connect(DB_PATH) as conn:
         GROUP BY shop
         ORDER BY shop
     """).fetchall()
-    baseline_table_exists = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='product_baselines'"
-    ).fetchone()
     baseline_prices = dict(conn.execute(
         "SELECT match_key, price FROM product_baselines"
-    ).fetchall()) if baseline_table_exists else {}
+    ).fetchall())
     favorite_keys = {
         row[0] for row in conn.execute("SELECT match_key FROM product_favorites")
     }
@@ -254,7 +263,7 @@ if table_rows:
         edited_rows = editor_state.get("edited_rows", {})
         if not edited_rows:
             return
-        with sqlite3.connect(DB_PATH, timeout=10) as conn:
+        with connect_db() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS product_favorites (
                     match_key TEXT PRIMARY KEY,
@@ -267,7 +276,8 @@ if table_rows:
                 group_key = group_keys[int(row_index)]
                 if bool(changes["Favorit"]):
                     conn.execute(
-                        "INSERT OR IGNORE INTO product_favorites (match_key) VALUES (?)",
+                        "INSERT INTO product_favorites (match_key) VALUES (?) "
+                        "ON CONFLICT(match_key) DO NOTHING",
                         (group_key,),
                     )
                 else:
@@ -313,77 +323,83 @@ else:
     st.info("Nema proizvoda koji odgovaraju odabranom filtru.")
 
 if visible_groups:
-    with st.expander("Povijest cijena po shopu"):
-        history_groups = {
-            group[0]["match_key"]: group
-            for group in visible_groups
-        }
-        history_labels = {}
-        for key, group in history_groups.items():
-            title = min(group, key=lambda row: row["price"])["name"]
-            shop_count = len({row["shop"] for row in group})
-            history_labels[key] = f"{title} ({shop_count} shopova)"
+    history_expander = st.expander(
+        "Povijest cijena po shopu",
+        on_change="rerun",
+        key="price_history_expander",
+    )
+    if history_expander.open:
+        with history_expander:
+            history_groups = {
+                group[0]["match_key"]: group
+                for group in visible_groups
+            }
+            history_labels = {}
+            for key, group in history_groups.items():
+                title = min(group, key=lambda row: row["price"])["name"]
+                shop_count = len({row["shop"] for row in group})
+                history_labels[key] = f"{title} ({shop_count} shopova)"
 
-        selected_history_key = st.selectbox(
-            "Odaberi proizvod",
-            options=list(history_groups),
-            format_func=lambda key: history_labels[key],
-            key="price_history_product",
-        )
+            selected_history_key = st.selectbox(
+                "Odaberi proizvod",
+                options=list(history_groups),
+                format_func=lambda key: history_labels[key],
+                key="price_history_product",
+            )
 
-        with sqlite3.connect(DB_PATH, timeout=10) as conn:
-            history_rows = conn.execute("""
-                SELECT l.shop, l.name, l.match_name, ph.ts, ph.price, ph.in_stock
-                FROM listings l
-                JOIN price_history ph ON ph.listing_id = l.id
-                WHERE ph.ts IS NOT NULL
-                ORDER BY ph.ts
-            """).fetchall()
+            with connect_db() as conn:
+                history_rows = conn.execute("""
+                    SELECT l.shop, l.name, l.match_name, ph.ts, ph.price, ph.in_stock
+                    FROM listings l
+                    JOIN price_history ph ON ph.listing_id = l.id
+                    WHERE ph.ts IS NOT NULL
+                    ORDER BY ph.ts
+                """).fetchall()
 
-        history_data = []
-        for shop, name, match_name, ts, price, in_stock in history_rows:
-            row_key = match_key(match_name or name or "") or (name or "").casefold()
-            if row_key != selected_history_key:
-                continue
-            history_data.append({
-                "Datum": datetime.fromisoformat(
-                    ts.replace("Z", "+00:00")
-                ).astimezone(),
-                "Shop": shop,
-                "Cijena (€)": float(price) if price is not None else None,
-                "Na zalihi": "Da" if in_stock else "Ne",
-            })
+            history_data = []
+            for shop, name, match_name, ts, price, in_stock in history_rows:
+                row_key = match_key(match_name or name or "") or (name or "").casefold()
+                if row_key != selected_history_key:
+                    continue
+                history_data.append({
+                    "Datum": datetime.fromisoformat(
+                        ts.replace("Z", "+00:00")
+                    ).astimezone(),
+                    "Shop": shop,
+                    "Cijena (€)": float(price) if price is not None else None,
+                    "Na zalihi": "Da" if in_stock else "Ne",
+                })
 
-        if history_data:
-            history_df = pd.DataFrame(history_data)
-            price_chart = (
-                history_df.dropna(subset=["Cijena (€)"])
-                .pivot_table(
-                    index="Datum",
-                    columns="Shop",
-                    values="Cijena (€)",
-                    aggfunc="last",
+            if history_data:
+                history_df = pd.DataFrame(history_data)
+                price_chart = (
+                    history_df.dropna(subset=["Cijena (€)"])
+                    .pivot_table(
+                        index="Datum",
+                        columns="Shop",
+                        values="Cijena (€)",
+                        aggfunc="last",
+                    )
+                    .sort_index()
                 )
-                .sort_index()
-            )
-            if not price_chart.empty:
-                st.line_chart(
-                    price_chart,
-                    height=320,
-                    y_label="Cijena (€)",
-                )
+                if not price_chart.empty:
+                    st.line_chart(
+                        price_chart,
+                        height=320,
+                        y_label="Cijena (€)",
+                    )
 
-            st.dataframe(
-                history_df.sort_values("Datum", ascending=False),
-                hide_index=True,
-                width="stretch",
-                column_config={
-                    "Cijena (€)": st.column_config.NumberColumn(format="%.2f €"),
-                },
-            )
-            st.caption(
-                "Povijest bilježi početno stanje i promjene cijene ili zalihe; "
-                "ne dodaje zapis za svaki scrape."
-            )
-        else:
-            st.info("Za ovaj proizvod još nema spremljenih zapisa povijesti.")
+                st.dataframe(
+                    history_df.sort_values("Datum", ascending=False),
+                    hide_index=True,
+                    width="stretch",
+                    column_config={
+                        "Cijena (€)": st.column_config.NumberColumn(format="%.2f €"),
+                    },
+                )
+                st.caption(
+                    "Povijest bilježi početno stanje i promjene cijene ili zalihe; "
+                    "ne dodaje zapis za svaki scrape."
+                )
+            else:
+                st.info("Za ovaj proizvod još nema spremljenih zapisa povijesti.")
