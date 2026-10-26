@@ -1,0 +1,49 @@
+shops:
+  - name: magicomens
+    platform: shopify
+    base_url: https://magicomens.com
+    collections: [trading-card-games]
+    min_price: 30
+  - name: dabas
+    platform: woocommerce
+    base_url: https://dabas.hr
+    category_id: 371
+    min_price: 30
+  - name: sophoslab
+    platform: sophoslab
+    base_url: https://www.sophoslab.hr
+    list_url: "https://www.sophoslab.hr/proizvodi?categories=501%2C592%2C714%2C687%2C706%2C742%2C767%2C686%2C806&only-available=1"
+    preorder_list_url: "https://www.sophoslab.hr/proizvodi?categories=501%2C592%2C714%2C687%2C706%2C742%2C767%2C686%2C806&preorder=1"
+    min_price: 30
+  - name: pokebros
+    platform: woocommerce
+    base_url: https://pokebros.com.hr
+    min_price: 30
+  - name: riplay
+    platform: woocommerce
+    base_url: https://ri-play.com
+    category_id: 30
+    min_price: 30
+  - name: phoenix
+    platform: woocommerce
+    base_url: https://www.phoenix-feather.eu
+    category_id: 110
+    check_password_protected: true
+    min_price: 30
+  - name: skupisve
+    platform: shopify
+    base_url: https://skupisve.hr
+    include_tcg_catalog: true
+    include_unavailable_preorders: true
+    collections:
+      - magic-the-gathering
+      - pokemon
+      - riftbound
+      - one-piece
+      - yu-gi-oh
+    min_price: 30
+  - name: svarogsden
+    platform: woocommerce
+    base_url: https://svarogsden.com
+    category_id: 23
+    min_price: 30

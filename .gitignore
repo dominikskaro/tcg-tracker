@@ -1,0 +1,13 @@
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+logs/
+tcg.db
+tcg.db-*
+*.sqlite
+*.sqlite3
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
