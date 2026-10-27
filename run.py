@@ -1,4 +1,5 @@
 import os
+import time
 import yaml
 from datetime import datetime
 from scrapers import shopify, woocommerce, sophoslab
@@ -33,6 +34,7 @@ all_shops_succeeded = True
 failed_shops = []
 inventory_warning_shops = []
 for shop in shops:
+    shop_started = time.perf_counter()
     try:
         items = SCRAPERS[shop["platform"]].fetch(shop)
     except Exception as e:
@@ -44,6 +46,10 @@ for shop in shops:
                 send_status(f"Greška pri dohvaćanju shopa {shop['name']}: {str(e)[:1000]}")
             except Exception as telegram_error:
                 print(f"GREŠKA Telegram statusa: {telegram_error}")
+        print(
+            f"TRAJANJE SHOPA {shop['name']}: "
+            f"{time.perf_counter() - shop_started:.1f} s (dohvat nije uspio)"
+        )
         continue
 
     min_price = shop.get("min_price", 0)
@@ -116,6 +122,10 @@ for shop in shops:
     for e in events:
         extra = f' (bilo {e["old_price"]:.2f} €)' if e["type"] == "PRICE_DROP" else ""
         print(f'{e["type"]:10} | {e["price"]:.2f} €{extra} | {e["name"]}')
+    print(
+        f"TRAJANJE SHOPA {shop['name']}: "
+        f"{time.perf_counter() - shop_started:.1f} s"
+    )
 
 if all_shops_succeeded and not inventory_warning_shops:
     include_unavailable_preorders = {

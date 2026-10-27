@@ -23,6 +23,21 @@ def fetch(shop):
                          params=params, headers=HEADERS, timeout=20)
         if r.status_code == 400:      # prošli smo zadnju stranicu
             break
+        if shop.get("name") == "svarogsden" and r.status_code == 403:
+            diagnostic_headers = {
+                key: r.headers[key]
+                for key in ("Server", "Via", "CF-Ray", "X-Sucuri-ID", "X-Cache")
+                if r.headers.get(key)
+            }
+            body_preview = re.sub(
+                r"(?is)<(script|style)\b.*?>.*?</\1>", " ", r.text
+            )
+            body_preview = re.sub(r"<[^>]+>", " ", html.unescape(body_preview))
+            body_preview = re.sub(r"\s+", " ", body_preview).strip()[:400]
+            print(
+                "DIJAGNOSTIKA svarogsden HTTP 403: "
+                f"headers={diagnostic_headers}; odgovor={body_preview!r}"
+            )
         r.raise_for_status()
         data = r.json()
         if not data:
