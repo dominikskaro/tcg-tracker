@@ -3,8 +3,7 @@ name: TCG Tracker
 on:
   workflow_dispatch:
   schedule:
-    - cron: "5,35 6-20 * * *"
-      timezone: "Europe/Zagreb"
+    - cron: "12,42 5-19 * * *"
 
 permissions:
   contents: read
