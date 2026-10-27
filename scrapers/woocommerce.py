@@ -46,9 +46,11 @@ def fetch(shop):
             name = html.unescape(p["name"])
             if EXCLUDE.search(name):
                 continue
-            if shop.get("check_password_protected") and is_password_protected(
-                p["permalink"]
-            ):
+            needs_password_check = (
+                shop.get("check_password_protected")
+                and (p["is_in_stock"] or p.get("is_on_backorder"))
+            )
+            if needs_password_check and is_password_protected(p["permalink"]):
                 continue
             game = infer_game(name, p.get("categories", []))
             minor = p["prices"].get("currency_minor_unit", 2)
