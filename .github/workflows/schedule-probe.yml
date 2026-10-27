@@ -1,0 +1,17 @@
+name: Schedule Probe
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Confirm scheduled trigger
+        run: |
+          echo "GitHub delivered a scheduled event."
+          date -u
