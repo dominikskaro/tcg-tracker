@@ -28,7 +28,6 @@ shops:
     platform: woocommerce
     base_url: https://www.phoenix-feather.eu
     category_id: 110
-    check_password_protected: true
     min_price: 30
   - name: skupisve
     platform: shopify
