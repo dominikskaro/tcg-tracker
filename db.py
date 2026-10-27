@@ -202,15 +202,26 @@ def is_empty(conn, shop):
 def apply_and_diff(conn, shop, items, seed=False):
     now = datetime.now(timezone.utc).isoformat()
     events = []
+    history_rows = []
+    updates = []
+
+    rows = conn.execute(
+        "SELECT id, external_id, price, in_stock, game, orderable "
+        "FROM listings WHERE shop=?",
+        (shop,),
+    ).fetchall()
+    existing = {
+        external_id: (lid, price, in_stock, game, orderable)
+        for lid, external_id, price, in_stock, game, orderable in rows
+    }
+
     for it in items:
         stock, pre = int(it["in_stock"]), int(it["is_preorder"])
         orderable = int(it.get("orderable", it["in_stock"]))
         match_name = it.get("match_name") or it["name"]
         game = it.get("game")
-        row = conn.execute(
-            "SELECT id, price, in_stock, game, orderable FROM listings WHERE shop=? AND external_id=?",
-            (shop, it["external_id"]),
-        ).fetchone()
+        external_id = it["external_id"]
+        row = existing.get(external_id)
         if row is None:
             insert_sql = (
                 "INSERT INTO listings (shop, external_id, name, match_name, game, url, price, in_stock, "
@@ -224,9 +235,9 @@ def apply_and_diff(conn, shop, items, seed=False):
                 lid = conn.execute(insert_sql + " RETURNING id", values).fetchone()[0]
             else:
                 lid = conn.execute(insert_sql, values).lastrowid
-            conn.execute(
-                "INSERT INTO price_history VALUES (?,?,?,?)",
-                (lid, now, it["price"], stock),
+            history_rows.append((lid, now, it["price"], stock))
+            existing[external_id] = (
+                lid, it["price"], stock, game, orderable
             )
             if orderable and not seed:
                 event_type = "PREORDER_AVAILABLE" if pre and not stock else "NEW"
@@ -241,15 +252,27 @@ def apply_and_diff(conn, shop, items, seed=False):
             elif stock and old_price and it["price"] <= old_price * 0.95:
                 events.append({"type": "PRICE_DROP", "old_price": old_price, **it})
             if it["price"] != old_price or stock != old_stock or orderable != old_orderable:
-                conn.execute(
-                    "INSERT INTO price_history VALUES (?,?,?,?)",
-                    (lid, now, it["price"], stock),
-                )
-            conn.execute(
-                "UPDATE listings SET name=?, match_name=?, game=?, url=?, price=?, in_stock=?, is_preorder=?, orderable=?, "
-                "last_seen=? WHERE id=?",
-                (it["name"], match_name, game, it["url"], it["price"], stock, pre, orderable, now, lid),
+                history_rows.append((lid, now, it["price"], stock))
+            updates.append(
+                (it["name"], match_name, game, it["url"], it["price"],
+                 stock, pre, orderable, now, lid)
             )
+
+            # Keep duplicate external IDs in the same response consistent with
+            # the old one-at-a-time processing behavior.
+            existing[external_id] = (lid, it["price"], stock, game, orderable)
+
+    if updates:
+        conn.executemany(
+            "UPDATE listings SET name=?, match_name=?, game=?, url=?, price=?, in_stock=?, is_preorder=?, orderable=?, "
+            "last_seen=? WHERE id=?",
+            updates,
+        )
+    if history_rows:
+        conn.executemany(
+            "INSERT INTO price_history VALUES (?,?,?,?)",
+            history_rows,
+        )
     conn.commit()
     return events
 
@@ -268,17 +291,18 @@ def mark_missing(conn, shop, items):
         (shop,),
     ).fetchall()
     now = datetime.now(timezone.utc).isoformat()
-    n = 0
-    for lid, ext in rows:
-        if ext not in seen:
-            conn.execute("UPDATE listings SET in_stock=0, orderable=0 WHERE id=?", (lid,))
-            conn.execute(
-                "INSERT INTO price_history VALUES (?,?,?,?)",
-                (lid, now, None, 0),
-            )
-            n += 1
+    missing_ids = [lid for lid, ext in rows if ext not in seen]
+    if missing_ids:
+        conn.executemany(
+            "UPDATE listings SET in_stock=0, orderable=0 WHERE id=?",
+            [(lid,) for lid in missing_ids],
+        )
+        conn.executemany(
+            "INSERT INTO price_history VALUES (?,?,?,?)",
+            [(lid, now, None, 0) for lid in missing_ids],
+        )
     conn.commit()
-    return n
+    return len(missing_ids)
 
 
 def count_in_stock(conn, shop):

@@ -133,14 +133,17 @@ for shop in shops:
     print(f"\n=== {shop['name']}: {len(shown)} prikazano "
           f"({len(in_stock)} in stock, {preorder_orderable} prednarudžbi za narudžbu, "
           f"{len(items)} ukupno u kategoriji) ===")
-    print(f'{"KREIRANO":<17} | {"CIJENA":>8} | NAZIV (klikni za otvaranje)')
-    print("-" * 17 + "-+-" + "-" * 8 + "-+-" + "-" * NAME_W)
-    for i in shown:
-        name = i["name"] + (" [PREORDER]" if i["is_preorder"] else "")
-        if len(name) > NAME_W:
-            name = name[:NAME_W - 1] + "…"
-        padded = f"{name:<{NAME_W}}"
-        print(f'{("~" if i.get("created_approx") else "") + fmt_date(i["created_at"]):<17} | {i["price"]:>6.2f} € | {link(i["url"], padded)}')
+    if os.getenv("GITHUB_ACTIONS") == "true":
+        print(f"(detaljni ispis preskočen u GitHub Actions; {len(shown)} proizvoda)")
+    else:
+        print(f'{"KREIRANO":<17} | {"CIJENA":>8} | NAZIV (klikni za otvaranje)')
+        print("-" * 17 + "-+-" + "-" * 8 + "-+-" + "-" * NAME_W)
+        for i in shown:
+            name = i["name"] + (" [PREORDER]" if i["is_preorder"] else "")
+            if len(name) > NAME_W:
+                name = name[:NAME_W - 1] + "…"
+            padded = f"{name:<{NAME_W}}"
+            print(f'{("~" if i.get("created_approx") else "") + fmt_date(i["created_at"]):<17} | {i["price"]:>6.2f} € | {link(i["url"], padded)}')
 
     # ---- OVO JE c), drugi dio (ispis događaja) ----
     if seed:
