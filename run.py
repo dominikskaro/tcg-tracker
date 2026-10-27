@@ -1,6 +1,7 @@
 import os
 import time
 import yaml
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from scrapers import shopify, woocommerce, sophoslab
 from telegram_notify import send_events as send_telegram_events, send_status
@@ -18,6 +19,13 @@ def fmt_date(iso):
 def link(url, text):
     return f"\033]8;;{url}\033\\{text}\033]8;;\033\\"
 
+def timed_fetch(shop):
+    started = time.perf_counter()
+    try:
+        return SCRAPERS[shop["platform"]].fetch(shop), None, time.perf_counter() - started
+    except Exception as error:
+        return None, error, time.perf_counter() - started
+
 with open("shops.yaml", encoding="utf-8") as f:
     shops = yaml.safe_load(f)["shops"]
 
@@ -30,26 +38,44 @@ if not telegram_configured:
     print("Telegram obavijesti nisu uključene (nedostaje bot token ili chat ID).")
 
 conn = db.connect()
+run_started = time.perf_counter()
 all_shops_succeeded = True
 failed_shops = []
 inventory_warning_shops = []
+
+fetch_results = {}
+max_workers = max(1, min(8, len(shops)))
+with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    futures = {executor.submit(timed_fetch, shop): shop for shop in shops}
+    for future in as_completed(futures):
+        shop = futures[future]
+        items, fetch_error, fetch_duration = future.result()
+        fetch_results[shop["name"]] = (items, fetch_error)
+        suffix = " (dohvat nije uspio)" if fetch_error else ""
+        print(
+            f"TRAJANJE DOHVATA SHOPA {shop['name']}: "
+            f"{fetch_duration:.1f} s{suffix}"
+        )
+        if fetch_error:
+            all_shops_succeeded = False
+            failed_shops.append(shop["name"])
+            print(f"\nGREŠKA {shop['name']}: {fetch_error}")
+            if telegram_configured:
+                try:
+                    send_status(
+                        f"Greška pri dohvaćanju shopa {shop['name']}: "
+                        f"{str(fetch_error)[:1000]}"
+                    )
+                except Exception as telegram_error:
+                    print(f"GREŠKA Telegram statusa: {telegram_error}")
+
+shop_order = {shop["name"]: index for index, shop in enumerate(shops)}
+failed_shops.sort(key=lambda name: shop_order[name])
+
 for shop in shops:
     shop_started = time.perf_counter()
-    try:
-        items = SCRAPERS[shop["platform"]].fetch(shop)
-    except Exception as e:
-        all_shops_succeeded = False
-        failed_shops.append(shop["name"])
-        print(f"\nGREŠKA {shop['name']}: {e}")
-        if telegram_configured:
-            try:
-                send_status(f"Greška pri dohvaćanju shopa {shop['name']}: {str(e)[:1000]}")
-            except Exception as telegram_error:
-                print(f"GREŠKA Telegram statusa: {telegram_error}")
-        print(
-            f"TRAJANJE SHOPA {shop['name']}: "
-            f"{time.perf_counter() - shop_started:.1f} s (dohvat nije uspio)"
-        )
+    items, fetch_error = fetch_results[shop["name"]]
+    if fetch_error:
         continue
 
     min_price = shop.get("min_price", 0)
@@ -123,7 +149,7 @@ for shop in shops:
         extra = f' (bilo {e["old_price"]:.2f} €)' if e["type"] == "PRICE_DROP" else ""
         print(f'{e["type"]:10} | {e["price"]:.2f} €{extra} | {e["name"]}')
     print(
-        f"TRAJANJE SHOPA {shop['name']}: "
+        f"TRAJANJE OBRADE SHOPA {shop['name']}: "
         f"{time.perf_counter() - shop_started:.1f} s"
     )
 
@@ -148,3 +174,5 @@ if telegram_configured:
         send_status(final_status)
     except Exception as e:
         print(f"GREŠKA Telegram završnog statusa: {e}")
+
+print(f"TRAJANJE UKUPNO RUNA: {time.perf_counter() - run_started:.1f} s")
